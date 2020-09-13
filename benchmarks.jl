@@ -1,12 +1,16 @@
 # BBOB benchmarks
 # http://coco.lri.fr/downloads/download15.03/bbobdocfunctions.pdf
 
-module Benchmark
+module Benchmarks
 using LinearAlgebra
 
 export rotation_matrix
 function rotation_matrix(D)
     return qr(rand(D, D)).Q
+end
+
+function _rademacher(D)
+    return rand(0:1, D) .* 2 .- 1
 end
     
 function _t_asy(x, beta)
@@ -49,7 +53,6 @@ function _f_pen(x)
         end
     end
     return sum(new_x)
-
 end
 
 export sphere
@@ -89,11 +92,8 @@ function buche_rastigin(x, x0)
             s[i] = 10^(0.5 * (i - 1) / (D - 1))
         end
     end
-
     z = s .* _t_osz(x - x0)
-
     return 10 * (D - sum(cos.(2pi * z))) + sum(z.^2) + 100 * _f_pen(x)
-    
 end
 
 export linear_slope
@@ -125,8 +125,8 @@ function attractive_sector(x, x0, Q)
     return _t_osz([sum((s .* z).^2)])[1]^0.9
 end
 
-export step_elipsoidal
-function step_elipsoidal(x, x0, R1, R2)
+export step_ellipsoidal
+function step_ellipsoidal(x, x0, R1, R2)
     D = length(x)
     z_hat = diagm(_lambda(D, 10.)) * R1 * (x - x0)
     z_til = zero(x)
@@ -153,11 +153,10 @@ function rosenbrock(x, x0)
     return f
 end
 
-
 export rosenbroch_rotated
-function rosenbroch_rotated(x, x0, R)
+function rosenbroch_rotated(x, R)
     D = length(x)
-    z = max(1, sqrt(D) / 8) * R * (x - x0) .+ 0.5
+    z = max(1, sqrt(D) / 8) * R * x .+ 0.5
     f = 0
     for i in 1:D - 1
         f += (100 * (z[i] - z[i + 1])^2 + (z[i] - 1)^2) 
@@ -184,10 +183,9 @@ end
 
 export bent_cigar
 function bent_cigar(x, x0, R)
-    z = R * _t_asy(R(x - x0), 0.5)
+    z = R * _t_asy(R * (x - x0), 0.5)
     return z[1]^2 + 10^6 * sum(z[2:length(x)].^2)
 end
-
 
 export sharp_ridge
 function sharp_ridge(x, x0, R, Q)
@@ -221,21 +219,37 @@ function weierstrass(x, x0, R, Q)
     z = R * diagm(_lambda(D, 1 / 100)) * Q * _t_osz(R * (x - x0))
     f_0 = 0
     for k in 0:11
-        f_0 += 2^(-k) * cos(2pi * 3^k / 3)
+        f_0 += 1 / 2^k * cos(2pi * 3^k / 2)
     end
     f = 0
     for i in 1:D
         for k in 0:11
-            f += 2^(-k) * cos(2pi * 3^k * (z[i] + 0.5))
+            f += 1 / 2^k * cos(2pi * 3^k * (z[i] + 0.5))
         end
     end
-    return 10 * (1 / D * f - f_0)^3 + 10 / D * _f_pen(x)
+    return 10 * (f / D - f_0)^3 + 10 / D * _f_pen(x)
 end
 
 export schaffers_f7
 function schaffers_f7(x, x0, R, Q)
     D = length(x)
-    z = diagm(D, 10.) * Q * _t_asy(R(x - x0), 0.5)
+    z = diagm(_lambda(D, 10.)) * Q * _t_asy(R(x - x0), 0.5)
+    s = zero(x)
+    for i in 1:D - 1
+        s[i] = sqrt(z[i]^2 + z[i + 1]^2)
+    end
+    # I don't know if this is correct
+    s[D] = sqrt(z[0]^2 + z[D]^2)
+    f = 0
+    for i in 1:D - 1
+        f += sqrt(s[i]) * (1 + (sin(50 * s[i]^0.2)^2))
+    end
+    return (f / (D - 1))^2 + 10 * _f_pen(x)
+end
+
+function schaffers_f7_ill_conditioned(x, x0, R, Q)
+    D = length(x)
+    z = diagm(_lambda(D, 1000.)) * Q * _t_asy(R(x - x0), 0.5)
     s = zero(x)
     for i in 1:D - 1
         s[i] = sqrt(z[i]^2 + z[i + 1]^2)
@@ -249,12 +263,33 @@ function schaffers_f7(x, x0, R, Q)
     return (f / (D - 1))^2 + 10 * _f_pen(x)
 end
 
-function griewank_rosenbrock()
+function composite_griewank_rosenbrock(x, x0, R)
+    D = length(x)
+    z = max(1, sqrt(D) / 8) * R * x + 0.5
     
+    s = zero(x)
+    for i in 1:D - 1
+        s[i] = sqrt(z[i]^2 + z[i + 1]^2)
+    end
+    # I don't know this is correct
+    s[D] = sqrt(z[0]^2 + z[D]^2)
+    f = 0
+    for i in 1:D - 1
+        f += s[i] / 4000 - cos(s[i])
+    end
+    return 10 / (D - 1) * f + 10
 end
 
-function schwefel_226()
-    
+function schwefel_226(x,  rademacher)
+    D = length(x)
+    x0 = 4.2096874633 / 2 * rademacher
+    x_hat = 2 * rademacher .* x
+    z_hat = copy(x_hat)
+    for i in 1:D - 1
+        z_hat[i + 1] = x_hat[i + 1] + 0.25 * (x_hat[i] + x0[i])
+    end
+    z = 100 * (_lambda(D, 10.) .* z_hat .- x0)
+    return - sum(z .* sin.(sqrt.(abs.(z)))) / D + 4.189828872724339 + 100 * _f_pen(z ./ 100.)
 end
 
 function gallaghers_gaussian_101me_peaks()
@@ -265,8 +300,20 @@ function gallaghers_gaussian_21hi_peaks()
     
 end
 
-function katsuura()
+function katsuura(x, x0, R, Q)
+    D = length(x)
+    z = Q * diagm(_lambda(D, 100.)) * R * (x - x0)
+    f = 0
+    for i in 1:D
+        g = 0
+        for j in 1:32
+            t = 2^j * z[i]
+            g += abs(t - round(t)) / 2^j
+        end
     
+        f *= 1 + i * g
+    end
+    return 10 / D^2 * (f - 1) + _f_pen(x)
 end
 
 function lunacek_bi_rastrigin()
